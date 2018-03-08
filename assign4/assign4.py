@@ -305,13 +305,18 @@ def load_model(model, opt, load_path):
 def run_validation(model, dataset, options):
     err = 0
     count = 0
+    totalAcc = 0
+    numIt = 0
     for data, labels, _ in batch_iterator(dataset, options.batch_size, forever=False):
         outp = model(Variable(data))
         loss = nn.CrossEntropyLoss()(F.log_softmax(outp), Variable(labels))
         # loss = nn.NLLLoss()(F.log_softmax(outp), Variable(labels))
         acc = (outp.data.max(1)[1] == labels).sum() / data.shape[0]
+        totalAcc +=acc
         err += (1-acc) * data.shape[0]
         count += data.shape[0]
+        numIt+=1
+    print("Acc: ", totalAcc/numIt)
     err = err / count
     print('Ev-Err={}'.format(err))
     return err
@@ -321,8 +326,7 @@ def run_test(model, dataset, options):
     print('Writing predictions to {}'.format(os.path.abspath(options.predictions)))
 
     preds_dict = dict()
-
-    for data, _, example_ids in batch_iterator(dataset, options.batch_size, forever=False):
+    for data, labels, example_ids in batch_iterator(dataset, options.batch_size, forever=False):
         outp = model(Variable(data))
         preds = outp.data.max(1)[1]
 
@@ -344,14 +348,13 @@ def run(options):
     embeddings = np.vstack((embeddings_word2vec,embeddings_glove))
 
     EPOCH = 5
-    BATCH_SIZE = 50
     KERNEL_SIZES = [3,4,5]
     KERNEL_DIM = 100
     LR = 0.001
-    USE_CUDA = False
+    USE_CUDA = True
 
     model = CNNClassifier(len(vocab), 300, 5, KERNEL_DIM, KERNEL_SIZES)
-    model.init_weights(embeddings) # initialize embedding matrix using pretrained vectors
+    model.init_weights(embeddings_glove) # initialize embedding matrix using pretrained vectors
 
     if USE_CUDA:
         model = model.cuda()
@@ -368,29 +371,30 @@ def run(options):
         run_test(model, test_data, options)
         sys.exit()
 
-    for data, labels, _ in batch_iterator(train_data, options.batch_size, forever=True):
-        outp = model(Variable(data))
-        loss = nn.CrossEntropyLoss()(F.log_softmax(outp), Variable(labels))
-        # loss = nn.NLLLoss()(F.log_softmax(outp), Variable(labels))
-        acc = (outp.data.max(1)[1] == labels).sum() / data.shape[0]
+    while(step < 10000):
+        for data, labels, _ in batch_iterator(train_data, options.batch_size, forever=True):
+            outp = model(Variable(data))
+            loss = nn.CrossEntropyLoss()(F.log_softmax(outp), Variable(labels))
+            # loss = nn.NLLLoss()(F.log_softmax(outp), Variable(labels))
+            acc = (outp.data.max(1)[1] == labels).sum() / data.shape[0]
 
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
 
-        if step % options.log_every == 0:
-            print('Step={} Tr-Loss={} Tr-Acc={}'.format(step, loss.data[0], acc))
+            if step % options.log_every == 0:
+                print('Step={} Tr-Loss={} Tr-Acc={}'.format(step, loss.data[0], acc))
 
-        if step % options.eval_every == 0:
-            val_err = run_validation(model, validation_data, options)
+            if step % options.eval_every == 0:
+                val_err = run_validation(model, validation_data, options)
 
-        # early stopping
-            if val_err < best_val_err:
-                best_val_err = val_err
-                print('Checkpointing model step={} best_val_err={}.'.format(step, best_val_err))
-                checkpoint_model(step, val_err, model, opt, options.model)
+            # early stopping
+                if val_err < best_val_err:
+                    best_val_err = val_err
+                    print('Checkpointing model step={} best_val_err={}.'.format(step, best_val_err))
+                    checkpoint_model(step, val_err, model, opt, options.model)
 
-        step += 1
+            step += 1
 
 
 if __name__ == '__main__':
@@ -398,12 +402,12 @@ if __name__ == '__main__':
     parser.add_argument('--ids', default=mydir, type=str)
     parser.add_argument('--data', default=os.path.expanduser('data/stanfordSentimentTreebank'), type=str)
     parser.add_argument('--embeddings', default=os.path.expanduser('data/GoogleNews-vectors-negative300.txt'), type=str)
-    parser.add_argument('--model', default=os.path.join(mydir, 'model.ckpt'), type=str)
+    parser.add_argument('--model', default=os.path.join(mydir, 'model_frozenword2vec.ckpt'), type=str)
     parser.add_argument('--predictions', default=os.path.join(mydir, 'results.txt'), type=str)
     parser.add_argument('--log_every', default=100, type=int)
     parser.add_argument('--eval_every', default=1000, type=int)
-    parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--eval_only_mode', default=True, action='store_true')
+    parser.add_argument('--batch_size', default=50, type=int)
+    parser.add_argument('--eval_only_mode', action='store_true')
     options = parser.parse_args()
 
     print(json.dumps(options.__dict__, sort_keys=True, indent=4))
